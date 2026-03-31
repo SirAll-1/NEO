@@ -293,8 +293,30 @@
     </div>
   </div>
 
+  <!-- API KEY NOTICE -->
+  <div id="apiKeyBanner" style="
+    background:rgba(0,229,255,.07); border:1px solid rgba(0,229,255,.2);
+    border-radius:14px; padding:12px 18px; margin-bottom:20px;
+    font-size:.8rem; line-height:1.6; display:flex; gap:12px; align-items:flex-start;
+  ">
+    <div style="font-size:1.4rem;flex-shrink:0">🔑</div>
+    <div>
+      <strong style="color:var(--accent)">NASA API Key required.</strong>
+      Get a free key in seconds at <a href="https://api.nasa.gov/" target="_blank" style="color:var(--accent)">api.nasa.gov</a> — just enter your email. Paste it below.
+    </div>
+  </div>
+
   <!-- CONTROLS -->
   <div class="controls">
+    <div class="date-group">
+      <label>API KEY</label>
+      <input type="text" id="apiKey" placeholder="Paste NASA API key…" style="
+        background:var(--glass); border:1px solid var(--glass-border);
+        border-radius:10px; color:var(--text); font-family:'Space Mono',monospace;
+        font-size:.82rem; padding:8px 12px; outline:none; width:220px;
+        transition:border-color .2s, box-shadow .2s;
+      " />
+    </div>
     <div class="date-group">
       <label>FROM</label>
       <input type="date" id="startDate" />
@@ -359,7 +381,7 @@
 
 <script>
 // ── API ──────────────────────────────────────────────────────────────────────
-const API_KEY = 'DEMO_KEY';
+// API key read from input at fetch time
 const BASE_URL = 'https://api.nasa.gov/neo/rest/v1/feed';
 
 // ── STATE ────────────────────────────────────────────────────────────────────
@@ -401,14 +423,23 @@ document.getElementById('sfToggle').addEventListener('click', () => {
 document.getElementById('fetchBtn').addEventListener('click', fetchNeos);
 
 async function fetchNeos() {
-  const start = document.getElementById('startDate').value;
-  const end   = document.getElementById('endDate').value;
+  const start  = document.getElementById('startDate').value;
+  const end    = document.getElementById('endDate').value;
+  const apiKey = document.getElementById('apiKey').value.trim();
   if (!start || !end) return;
+  if (!apiKey) {
+    document.getElementById('apiKey').style.borderColor = 'var(--danger)';
+    document.getElementById('apiKey').focus();
+    return;
+  }
+  document.getElementById('apiKey').style.borderColor = '';
+  // hide banner once user has a key
+  document.getElementById('apiKeyBanner').style.display = 'none';
 
   showLoading();
   try {
     const res = await fetch(
-      `${BASE_URL}?start_date=${start}&end_date=${end}&api_key=${API_KEY}`
+      `${BASE_URL}?start_date=${start}&end_date=${end}&api_key=${apiKey}`
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -645,7 +676,7 @@ function showError(msg) {
   const statusMsg = document.getElementById('statusMsg');
   document.getElementById('neoTable').style.display = 'none';
   statusMsg.style.display = '';
-  statusMsg.innerHTML = `<div style="color:var(--danger)">Error: ${escHtml(msg)}<br><small>Note: DEMO_KEY has rate limits (30 req/hr). Try again in a moment.</small></div>`;
+  statusMsg.innerHTML = `<div style="color:var(--danger)">Error: ${escHtml(msg)}<br><small>Check your API key is correct. Free keys available at <a href="https://api.nasa.gov/" target="_blank" style="color:var(--accent)">api.nasa.gov</a>.</small></div>`;
 }
 
 function escHtml(s) {
