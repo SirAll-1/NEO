@@ -283,6 +283,11 @@
       pointer-events: all;
     }
     #sfNudge .sn-text strong { color: #ff4d6d; }
+    #sfNudge .sn-text strong.clickable {
+      cursor: pointer; text-decoration: underline dotted rgba(255,77,109,.5);
+      transition: text-shadow .2s;
+    }
+    #sfNudge .sn-text strong.clickable:hover { text-shadow: 0 0 12px rgba(255,77,109,.7); }
     #sfNudge .sn-close {
       margin-top: 10px;
       font-family: 'Space Mono', monospace;
@@ -317,7 +322,7 @@
 <div id="sfNudge">
   <div class="sn-text">
     That's enough astronomy for now! Do you want to see something really cool?
-    Click the <strong>Science Fiction Mode</strong> to see what I am talking about ☄️
+    Click the <strong class="clickable" id="sfNudgeActivate">Science Fiction Mode</strong> to see what I am talking about ☄️
   </div>
   <div class="sn-close" id="sfNudgeClose">dismiss</div>
 </div>
@@ -827,6 +832,13 @@ introOverlay.addEventListener('click', () => {
 document.getElementById('sfNudgeClose').addEventListener('click', e => {
   e.stopPropagation();
   sfNudge.classList.remove('show');
+});
+
+document.getElementById('sfNudgeActivate').addEventListener('click', e => {
+  e.stopPropagation();
+  sfNudge.classList.remove('show');
+  // Activate SF mode if not already on
+  if (!sfMode) document.getElementById('sfWrap').click();
 });
 </script>
 </body>
