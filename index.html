@@ -284,10 +284,16 @@
     }
     #sfNudge .sn-text strong { color: #ff4d6d; }
     #sfNudge .sn-text strong.clickable {
-      cursor: pointer; text-decoration: underline dotted rgba(255,77,109,.5);
-      transition: text-shadow .2s;
+      cursor: pointer;
+      border-bottom: 2px solid rgba(255,77,109,.6);
+      padding-bottom: 1px;
+      transition: color .2s, border-color .2s, text-shadow .2s;
     }
-    #sfNudge .sn-text strong.clickable:hover { text-shadow: 0 0 12px rgba(255,77,109,.7); }
+    #sfNudge .sn-text strong.clickable:hover {
+      color: #ff8099;
+      border-bottom-color: #ff4d6d;
+      text-shadow: 0 0 14px rgba(255,77,109,.8);
+    }
     #sfNudge .sn-close {
       margin-top: 10px;
       font-family: 'Space Mono', monospace;
