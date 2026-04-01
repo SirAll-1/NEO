@@ -464,10 +464,13 @@ scene.add(sunLight);
 })();
 
 // ── EARTH TEXTURE ─────────────────────────────────────────────────────────
+let earthCanvas, earthCtx, originalImageData;
 function makeEarthCanvas() {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 512;
+  earthCanvas = c;
   const ctx = c.getContext('2d');
+  earthCtx = ctx;
   // Ocean
   const og = ctx.createLinearGradient(0, 0, 0, 512);
   og.addColorStop(0,   '#1a3a5c');
@@ -508,6 +511,7 @@ function makeEarthCanvas() {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  originalImageData = ctx.getImageData(0, 0, 1024, 512);
   return c;
 }
 
@@ -558,8 +562,6 @@ scene.add(neoGroup);
 let neoMeshes   = [];
 let allNeos     = [];
 let sfMode      = false;
-let sfAnimating = false;
-let impactFlash = 0;
 
 // Seeded pseudo-random for stable NEO positions
 function seededRand(seed) {
@@ -609,35 +611,244 @@ function placeNeos(neos) {
 
 // ── SF ANIMATION ──────────────────────────────────────────────────────────
 let sfT = 0;
+let impactCount  = 0;
+let cameraShake  = 0;
+const impactedSet = new Set();
+const explosions  = [];
+const shockwaves  = [];
+const fireDots    = [];
 
-function tickSF(dt) {
-  if (!sfMode || !neoMeshes.length) return;
-  sfT = Math.min(sfT + dt * 0.35, 1);
+// Screen flash div
+const flashDiv = document.createElement('div');
+Object.assign(flashDiv.style, {
+  position:'fixed', inset:'0', zIndex:'50',
+  background:'rgba(255,140,0,0)', pointerEvents:'none', transition:'background .08s',
+});
+document.body.appendChild(flashDiv);
+let flashT = 0;
 
-  for (const mesh of neoMeshes) {
-    const t = Math.max(0, (sfT - mesh.userData.sfOffset) / (1 - mesh.userData.sfOffset));
-    const tEased = t < 1 ? t * t * (3 - 2 * t) : 1; // smoothstep
-    mesh.position.lerpVectors(mesh.userData.origPos, new THREE.Vector3(0, 0, 0), tEased);
+function triggerImpact(mesh) {
+  impactCount++;
+  impactedSet.add(mesh);
+  const neo  = mesh.userData.neo;
+  const dir  = mesh.userData.origPos.clone().normalize();
+  const pt   = dir.clone().multiplyScalar(EARTH_R);
+
+  addCrater(dir, neo);
+  spawnExplosion(pt, neo);
+  spawnShockwave(pt, dir);
+  spawnFireDot(pt, neo);
+  cameraShake = 0.6 + Math.min(1, (neo.diamMin + neo.diamMax) / 2 / 300) * 0.8;
+  flashT = 1;
+  updateEarthDamage();
+}
+
+function addCrater(dir, neo) {
+  const u = (Math.atan2(dir.z, dir.x) / (Math.PI * 2) + 0.5) * 1024;
+  const v = (0.5 - Math.asin(Math.max(-1, Math.min(1, dir.y))) / Math.PI) * 512;
+  const diamAvg = (neo.diamMin + neo.diamMax) / 2;
+  const r = Math.max(5, Math.min(80, diamAvg / 15));
+
+  earthCtx.save();
+  // Ejecta blanket (outer glow)
+  const eg = earthCtx.createRadialGradient(u, v, r*0.8, u, v, r*2.5);
+  eg.addColorStop(0, 'rgba(160,80,10,0.55)');
+  eg.addColorStop(1, 'rgba(100,40,0,0)');
+  earthCtx.beginPath(); earthCtx.arc(u, v, r*2.5, 0, Math.PI*2);
+  earthCtx.fillStyle = eg; earthCtx.fill();
+
+  // Ejecta rays
+  for (let i = 0; i < 10; i++) {
+    const angle = (i / 10) * Math.PI * 2;
+    const len = r * (1.8 + Math.random() * 1.5);
+    earthCtx.beginPath();
+    earthCtx.moveTo(u + Math.cos(angle)*r*0.9, v + Math.sin(angle)*r*0.9);
+    earthCtx.lineTo(u + Math.cos(angle)*len,   v + Math.sin(angle)*len);
+    earthCtx.strokeStyle = `rgba(180,90,10,${0.3 + Math.random()*0.3})`;
+    earthCtx.lineWidth = 1 + Math.random() * 3;
+    earthCtx.stroke();
   }
 
-  // Flash effect on "impact"
-  if (sfT > 0.95) {
-    impactFlash = Math.max(0, impactFlash - dt * 2);
-    // Pulse Earth red
-    earthMat.emissive.setHSL(0, 1, impactFlash * 0.3);
-    atmMat.color.setRGB(1, 0.1 + impactFlash * 0.3, 0.1);
-    atmMat.opacity = 0.1 + impactFlash * 0.25;
+  // Crater rim (bright)
+  earthCtx.beginPath(); earthCtx.arc(u, v, r, 0, Math.PI*2);
+  earthCtx.fillStyle = 'rgba(200,100,20,0.7)'; earthCtx.fill();
+
+  // Crater floor (dark)
+  earthCtx.beginPath(); earthCtx.arc(u, v, r*0.85, 0, Math.PI*2);
+  earthCtx.fillStyle = '#0d0500'; earthCtx.fill();
+
+  // Central lava glow
+  const lg = earthCtx.createRadialGradient(u, v, 0, u, v, r*0.6);
+  lg.addColorStop(0, 'rgba(255,180,0,0.95)');
+  lg.addColorStop(0.5,'rgba(255,80,0,0.7)');
+  lg.addColorStop(1,  'rgba(120,20,0,0)');
+  earthCtx.beginPath(); earthCtx.arc(u, v, r*0.6, 0, Math.PI*2);
+  earthCtx.fillStyle = lg; earthCtx.fill();
+
+  earthCtx.restore();
+  earthMat.map.needsUpdate = true;
+}
+
+function updateEarthDamage() {
+  // Char the surface progressively
+  earthCtx.save();
+  earthCtx.globalAlpha = Math.min(0.06, 0.015 * impactCount);
+  earthCtx.fillStyle = '#050200';
+  earthCtx.fillRect(0, 0, 1024, 512);
+  earthCtx.restore();
+  earthMat.map.needsUpdate = true;
+
+  // Atmosphere: blue → orange-brown → dark smoke
+  const d = Math.min(1, impactCount / 20);
+  atmMat.color.setRGB(0.13 + d*0.87, 0.4 - d*0.38, 1.0 - d*0.98);
+  atmMat.opacity = 0.10 + d * 0.45;
+  rimMat.color.setRGB(0.27 + d*0.73, 0.07, 0.07);
+  rimMat.opacity = 0.05 + d * 0.25;
+
+  // Earth self-glow (lava)
+  const g = Math.min(0.35, impactCount * 0.012);
+  earthMat.emissive.setRGB(g, g*0.2, 0);
+}
+
+function spawnExplosion(pos, neo) {
+  const diamAvg = (neo.diamMin + neo.diamMax) / 2;
+  const scale = Math.max(0.4, Math.min(5, diamAvg / 150));
+  const count = 90;
+  const posArr = new Float32Array(count * 3);
+  const colArr = new Float32Array(count * 3);
+  const vels = [];
+  for (let i = 0; i < count; i++) {
+    posArr[i*3] = pos.x; posArr[i*3+1] = pos.y; posArr[i*3+2] = pos.z;
+    const spd = (0.4 + Math.random() * 1.5) * scale;
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.random() * Math.PI;
+    vels.push(new THREE.Vector3(Math.sin(ph)*Math.cos(th)*spd, Math.sin(ph)*Math.sin(th)*spd, Math.cos(ph)*spd));
+    const t = Math.random();
+    colArr[i*3]   = 1;
+    colArr[i*3+1] = t > 0.6 ? Math.max(0, 1-(t-0.6)*2.5) : 1;
+    colArr[i*3+2] = t > 0.75 ? 0 : Math.max(0, 1-t/0.75);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(colArr, 3));
+  const mat = new THREE.PointsMaterial({ size: 0.18*scale, vertexColors: true, transparent: true, opacity: 1, sizeAttenuation: true });
+  const pts = new THREE.Points(geo, mat);
+  scene.add(pts);
+  explosions.push({ pts, geo, mat, vels, life: 1 });
+}
+
+function spawnShockwave(pos, dir) {
+  const geo = new THREE.RingGeometry(0.01, 0.12, 64);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  mesh.lookAt(pos.clone().add(dir));
+  scene.add(mesh);
+  shockwaves.push({ mesh, mat, age: 0, maxR: 2.5 + Math.random() * 2 });
+}
+
+function spawnFireDot(pos, neo) {
+  const diamAvg = (neo.diamMin + neo.diamMax) / 2;
+  const size = Math.max(0.04, Math.min(0.35, diamAvg / 1000));
+  const geo = new THREE.SphereGeometry(size, 8, 8);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff5500, transparent: true, opacity: 0.9 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  scene.add(mesh);
+  fireDots.push({ mesh, mat, age: 0 });
+}
+
+function tickExplosions(dt) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const e = explosions[i];
+    e.life -= dt * 0.55;
+    if (e.life <= 0) { scene.remove(e.pts); e.geo.dispose(); e.mat.dispose(); explosions.splice(i,1); continue; }
+    e.mat.opacity = e.life * e.life;
+    const pa = e.geo.attributes.position.array;
+    for (let j = 0; j < e.vels.length; j++) {
+      pa[j*3]   += e.vels[j].x * dt * 5;
+      pa[j*3+1] += e.vels[j].y * dt * 5;
+      pa[j*3+2] += e.vels[j].z * dt * 5;
+      e.vels[j].multiplyScalar(0.97);
+    }
+    e.geo.attributes.position.needsUpdate = true;
   }
 }
 
-function resetSF() {
-  sfT = 0; impactFlash = 1;
+function tickShockwaves(dt) {
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.age += dt;
+    const t = s.age / 1.2;
+    if (t >= 1) { scene.remove(s.mesh); s.mat.dispose(); shockwaves.splice(i,1); continue; }
+    const r = t * s.maxR;
+    s.mesh.scale.set(r, r, r);
+    s.mat.opacity = (1-t) * 0.75;
+    s.mat.color.setRGB(1, 0.4*(1-t), 0);
+  }
+}
+
+function tickFireDots(dt) {
+  for (const fd of fireDots) {
+    fd.age += dt;
+    fd.mat.opacity = 0.55 + Math.sin(fd.age * 5) * 0.35;
+    const pulse = 1 + Math.sin(fd.age * 3) * 0.15;
+    fd.mesh.scale.setScalar(pulse);
+  }
+}
+
+function tickSF(dt) {
+  if (!sfMode || !neoMeshes.length) return;
+  sfT = Math.min(sfT + dt * 0.3, 1);
+
   for (const mesh of neoMeshes) {
-    mesh.position.copy(mesh.userData.origPos);
+    const raw   = Math.max(0, (sfT - mesh.userData.sfOffset) / (1 - mesh.userData.sfOffset + 0.001));
+    const tEase = Math.min(1, raw < 1 ? raw*raw*(3-2*raw) : 1);
+    mesh.position.lerpVectors(mesh.userData.origPos, new THREE.Vector3(0,0,0), tEase);
+    if (tEase >= 0.97 && !impactedSet.has(mesh)) triggerImpact(mesh);
+  }
+
+  // Camera shake
+  if (cameraShake > 0) {
+    cameraShake -= dt * 4;
+    const s = Math.max(0, cameraShake) * 0.4;
+    camera.position.x += (Math.random()-0.5)*s;
+    camera.position.y += (Math.random()-0.5)*s;
+  }
+
+  // Screen flash decay
+  if (flashT > 0) {
+    flashT = Math.max(0, flashT - dt * 4);
+    flashDiv.style.background = `rgba(255,140,0,${flashT * 0.45})`;
+  }
+
+  tickExplosions(dt);
+  tickShockwaves(dt);
+  tickFireDots(dt);
+}
+
+function resetSF() {
+  sfT = 0; impactCount = 0; cameraShake = 0; flashT = 0;
+  flashDiv.style.background = 'transparent';
+  impactedSet.clear();
+
+  for (const e of explosions) { scene.remove(e.pts); e.geo.dispose(); e.mat.dispose(); }
+  explosions.length = 0;
+  for (const s of shockwaves) { scene.remove(s.mesh); s.mat.dispose(); }
+  shockwaves.length = 0;
+  for (const fd of fireDots) { scene.remove(fd.mesh); fd.mat.dispose(); }
+  fireDots.length = 0;
+
+  // Restore Earth texture
+  if (earthCtx && originalImageData) {
+    earthCtx.putImageData(originalImageData, 0, 0);
+    earthMat.map.needsUpdate = true;
   }
   earthMat.emissive.set(0, 0, 0);
-  atmMat.color.set(0x2266ff);
-  atmMat.opacity = 0.10;
+  atmMat.color.set(0x2266ff); atmMat.opacity = 0.10;
+  rimMat.color.set(0x44aaff); rimMat.opacity = 0.05;
+
+  for (const mesh of neoMeshes) mesh.position.copy(mesh.userData.origPos);
 }
 
 // ── RAYCASTER / HOVER ─────────────────────────────────────────────────────
@@ -788,10 +999,7 @@ document.getElementById('sfWrap').addEventListener('click', () => {
   if (sfMode && allNeos.length) {
     resetSF();
   } else if (!sfMode) {
-    earthMat.emissive.set(0, 0, 0);
-    atmMat.color.set(0x2266ff);
-    atmMat.opacity = 0.10;
-    for (const mesh of neoMeshes) mesh.position.copy(mesh.userData.origPos);
+    resetSF();
   }
   // Refresh tooltip if visible
   if (hovered) showTooltip(hovered.userData.neo);
